@@ -2,11 +2,6 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<link rel="manifest" href="./manifest.json">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="猫咪工资">
-<meta name="mobile-web-app-capable" content="yes">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai:wght@300;400;700&family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <title>🐱 小猫咪工资计算器</title>
@@ -977,28 +972,40 @@
 <script>
 // ===== 宠物系统 - 常量配置 (Task 1.1) =====
 var PET_CONST = {
-  // 情绪消耗
-  MOOD_DRAIN_NORMAL: 5,        // 正常上班: 5点/小时
-  MOOD_DRAIN_OT_BASE: 8,      // 加班基础: 8点/小时
-  MOOD_DRAIN_OT_INC: 1,       // 每多加班1小时, +1点/小时
-  MOOD_SICK_THRESHOLD: 10,     // 情绪 < 10 触发生病
-  MOOD_RECOVER_THRESHOLD: 50,  // 情绪 >= 50 解除生病
+  // 情绪消耗 & 恢复
+  MOOD_DRAIN_NORMAL: 4,        // 正常上班: 4点/小时
+  MOOD_DRAIN_OT_BASE: 8,       // 加班基础: 8点/小时
+  MOOD_DRAIN_OT_INC: 1,        // 每多加班1小时, +1点/小时
+  MOOD_SICK_THRESHOLD: 15,     // 情绪 < 15 触发生病（更早预警）
+  MOOD_RECOVER_THRESHOLD: 40,  // 情绪 >= 40 解除生病（更容易康复）
+  MOOD_REST_RECOVERY: 3,       // 休息中自动恢复: +3点/小时
+  MOOD_SICK_RECOVERY: 1,       // 生病中缓慢自恢复: +1点/小时（给出路）
   // 饥饿消耗
-  HUNGER_DRAIN_NORMAL: 5,      // 正常: 5点/小时
+  HUNGER_DRAIN_NORMAL: 4,      // 正常上班: 4点/小时
   HUNGER_DRAIN_SICK: 3,        // 生病: 3点/小时
-  // 健康消耗
-  HEALTH_DRAIN_OT: 10,         // 加班: 10点/小时
+  HUNGER_DRAIN_REST: 1,        // 休息/离线: 1点/小时（极慢，模拟自己觅食）
+  HUNGER_OFFLINE_CAP_HOURS: 8, // 离线补算上限: 最多8小时（防止离线必死）
+  // 健康消耗 & 恢复
+  HEALTH_DRAIN_NORMAL: 1,      // 正常上班: 1点/小时（打工有点累）
+  HEALTH_DRAIN_OT: 8,          // 加班: 8点/小时
+  HEALTH_REST_RECOVERY: 5,     // 休息中自动恢复: +5点/小时
+  HEALTH_LOW_THRESHOLD: 30,    // 健康 < 30 时打工币产出减半
   // 属性上下限
   ATTR_MAX: 100,
   ATTR_MIN: 0,
   // 打工币
-  COIN_INTERVAL_MIN: 60,       // 60分钟产1枚
+  COIN_INTERVAL_MIN: 30,       // 正常上班: 30分钟产1枚（翻倍）
+  COIN_INTERVAL_OT_MIN: 60,    // 加班: 60分钟产1枚（半价加班费）
+  // 经验
+  EXP_PER_WORK_HOUR: 1,        // 工作计时: +1经验/小时
+  // 升级奖励
+  LEVEL_UP_COIN_REWARD: 5,     // 每升一级奖励5打工币
   // 商品定价
   SHOP_ITEMS: {
-    catFood:  { name: '严选猫粮', price: 2, type: 'consumable', icon: '严选猫粮图标', desc: '+20饥饿 +10情绪 +10经验 (每日限3次)', dailyLimit: 3, effects: { hunger: 20, mood: 10, exp: 10 } },
-    catTeaser:{ name: '逗猫棒',   price: 5, type: 'durable',    icon: '逗猫棒图标',   desc: '+10情绪 (耐久10/10)', maxDurability: 10, effects: { mood: 10 } },
-    vitamin:  { name: '红猫维生素', price: 3, type: 'consumable', icon: '红猫维生素图标', desc: '+10健康', effects: { health: 10 } },
-    revival:  { name: '牛马复活币', price: 20, type: 'instant',  icon: '牛马复活币图标', desc: '复活猫咪，保留等级和经验，属性恢复至 70' }
+    catFood:  { name: '严选猫粮', price: 3, type: 'consumable', icon: '严选猫粮图标', desc: '+25饥饿 +15情绪 +10经验 (每日限3次)', dailyLimit: 3, effects: { hunger: 25, mood: 15, exp: 10 } },
+    catTeaser:{ name: '逗猫棒',   price: 8, type: 'durable',    icon: '逗猫棒图标',   desc: '+15情绪 (耐久10/10)', maxDurability: 10, effects: { mood: 15 } },
+    vitamin:  { name: '红猫维生素', price: 4, type: 'consumable', icon: '红猫维生素图标', desc: '+20健康', effects: { health: 20 } },
+    revival:  { name: '牛马复活币', price: 15, type: 'instant',  icon: '牛马复活币图标', desc: '复活猫咪，保留等级和经验，属性恢复至 75' }
   },
   // 经验公式: expRequired(level) = 100 + 20 * (2^(level-1) - 1)
   EXP_BASE: 100,
@@ -1072,22 +1079,25 @@ function offlineTick(deltaMs) {
   var pet = petData.pet;
   if (pet.isDead) return; // 已死亡不再补算衰减
 
-  // 上限截断为一个工作日
-  var maxMs = (cfg.hoursPerDay || 8) * 3600 * 1000;
-  if (deltaMs > maxMs) deltaMs = maxMs;
+  // 离线封顶8小时（防止周末/长假回来猫咪必死）
+  var capMs = PET_CONST.HUNGER_OFFLINE_CAP_HOURS * 3600 * 1000;
+  if (deltaMs > capMs) deltaMs = capMs;
 
   var deltaHour = deltaMs / 3600000;
 
   var beforeHunger = pet.hunger, beforeMood = pet.mood, beforeHealth = pet.health;
 
-  // 情绪消耗（按正常上班速率）
-  if (pet.mood > PET_CONST.MOOD_SICK_THRESHOLD) {
-    pet.mood -= PET_CONST.MOOD_DRAIN_NORMAL * deltaHour;
-    if (pet.mood < PET_CONST.MOOD_SICK_THRESHOLD) pet.mood = Math.max(pet.mood, 0);
+  // 离线视为「休息」：情绪缓慢回复，饥饿极慢消耗，健康回复
+  // 情绪：生病时极缓自愈，否则正常恢复
+  if (pet.isSick) {
+    pet.mood += PET_CONST.MOOD_SICK_RECOVERY * deltaHour;
+  } else {
+    pet.mood += PET_CONST.MOOD_REST_RECOVERY * deltaHour;
   }
-  // 饥饿消耗
-  var hungerRate = pet.isSick ? PET_CONST.HUNGER_DRAIN_SICK : PET_CONST.HUNGER_DRAIN_NORMAL;
-  pet.hunger -= hungerRate * deltaHour;
+  // 饥饿：休息时极慢消耗（猫咪自己觅食）
+  pet.hunger -= PET_CONST.HUNGER_DRAIN_REST * deltaHour;
+  // 健康：休息恢复
+  pet.health += PET_CONST.HEALTH_REST_RECOVERY * deltaHour;
 
   // 属性钳制
   pet.mood = clampAttr(pet.mood);
@@ -1102,67 +1112,86 @@ function offlineTick(deltaMs) {
   checkPetDeath();
 
   var offlineMin = Math.round(deltaMs / 60000);
-  console.log('[PetSystem] 离线补算: ' + offlineMin + '分钟 | 饥饿:' + beforeHunger.toFixed(1) + '→' + pet.hunger.toFixed(1)
+  console.log('[PetSystem] 离线补算(休息): ' + offlineMin + '分钟 | 饥饿:' + beforeHunger.toFixed(1) + '→' + pet.hunger.toFixed(1)
     + ' 情绪:' + beforeMood.toFixed(1) + '→' + pet.mood.toFixed(1)
     + ' 健康:' + beforeHealth.toFixed(1) + '→' + pet.health.toFixed(1));
   savePetData();
 }
 
-// ===== 宠物系统 tick (Task 2.1-2.4, 3.1-3.5, 4.1-4.4) =====
+// ===== 宠物系统 tick =====
 function petTick(isWorking, isOvertime, overtimeHours) {
   if (!petData || !cfg) return;
   var now = Date.now();
-
-  // 关键修复：不工作时不更新 lastTickTime，保留时间差给下次工作时追赶
-  if (!isWorking && !isOvertime) {
-    return;
-  }
 
   var deltaMs = now - (petData.lastTickTime || now);
   petData.lastTickTime = now;
   if (deltaMs <= 0) return;
 
-  // 限制最大追赶时间为一个工作日（防止隔夜超量消耗）
+  // 限制最大追赶时间为一个工作日
   var maxMs = (cfg.hoursPerDay || 8) * 3600 * 1000;
   if (deltaMs > maxMs) deltaMs = maxMs;
 
   var deltaSec = deltaMs / 1000;
   var deltaHour = deltaSec / 3600;
-
   var pet = petData.pet;
+  var isResting = !isWorking && !isOvertime;
 
-  // --- 死亡时跳过属性衰减，仅保留打工币产出 ---
+  // --- 死亡时跳过属性变化 ---
   if (!pet.isDead) {
-    // --- 情绪消耗 (Task 3.1, 3.2) ---
-    if (pet.mood > PET_CONST.MOOD_SICK_THRESHOLD || !pet.isSick) {
-      if (pet.mood > PET_CONST.MOOD_SICK_THRESHOLD) {
+    if (isResting) {
+      // ===== 休息状态：属性自动恢复 =====
+      // 情绪恢复（生病时极缓自愈，否则正常恢复）
+      if (pet.isSick) {
+        pet.mood += PET_CONST.MOOD_SICK_RECOVERY * deltaHour;
+      } else {
+        pet.mood += PET_CONST.MOOD_REST_RECOVERY * deltaHour;
+      }
+      // 饥饿极慢消耗（猫咪自己觅食）
+      pet.hunger -= PET_CONST.HUNGER_DRAIN_REST * deltaHour;
+      // 健康恢复
+      pet.health += PET_CONST.HEALTH_REST_RECOVERY * deltaHour;
+
+    } else {
+      // ===== 工作/加班状态：属性消耗 =====
+      // --- 情绪消耗 ---
+      if (pet.isSick) {
+        // 生病时情绪极缓自愈（给出路）
+        pet.mood += PET_CONST.MOOD_SICK_RECOVERY * deltaHour;
+      } else if (pet.mood > PET_CONST.MOOD_SICK_THRESHOLD) {
         var moodRate;
         if (isOvertime) {
-          var otH = Math.floor(overtimeHours);
+          var otH = Math.max(0, Math.floor(overtimeHours));
           moodRate = PET_CONST.MOOD_DRAIN_OT_BASE + otH * PET_CONST.MOOD_DRAIN_OT_INC;
         } else {
           moodRate = PET_CONST.MOOD_DRAIN_NORMAL;
         }
         pet.mood -= moodRate * deltaHour;
-        if (pet.mood < PET_CONST.MOOD_SICK_THRESHOLD) pet.mood = Math.max(pet.mood, 0);
+      }
+
+      // --- 饥饿消耗 ---
+      var hungerRate = pet.isSick ? PET_CONST.HUNGER_DRAIN_SICK : PET_CONST.HUNGER_DRAIN_NORMAL;
+      pet.hunger -= hungerRate * deltaHour;
+
+      // --- 健康消耗（正常上班微量，加班大量）---
+      if (isOvertime) {
+        pet.health -= PET_CONST.HEALTH_DRAIN_OT * deltaHour;
+      } else {
+        pet.health -= PET_CONST.HEALTH_DRAIN_NORMAL * deltaHour;
+      }
+
+      // --- 工作计时经验（不生病不死亡才产出）---
+      if (!pet.isSick) {
+        pet.exp = (pet.exp || 0) + PET_CONST.EXP_PER_WORK_HOUR * deltaHour;
+        checkLevelUp();
       }
     }
 
-    // --- 饥饿消耗 (Task 3.3) ---
-    var hungerRate = pet.isSick ? PET_CONST.HUNGER_DRAIN_SICK : PET_CONST.HUNGER_DRAIN_NORMAL;
-    pet.hunger -= hungerRate * deltaHour;
-
-    // --- 健康消耗 (Task 3.4) ---
-    if (isOvertime) {
-      pet.health -= PET_CONST.HEALTH_DRAIN_OT * deltaHour;
-    }
-
-    // --- 属性钳制 (Task 3.6) ---
-    pet.mood = clampAttr(pet.mood);
+    // --- 属性钳制 ---
+    pet.mood   = clampAttr(pet.mood);
     pet.hunger = clampAttr(pet.hunger);
     pet.health = clampAttr(pet.health);
 
-    // --- 生病判定 (Task 4.1, 4.2) ---
+    // --- 生病判定 ---
     if (!pet.isSick && pet.mood < PET_CONST.MOOD_SICK_THRESHOLD) {
       pet.isSick = true;
     }
@@ -1174,13 +1203,26 @@ function petTick(isWorking, isOvertime, overtimeHours) {
     checkPetDeath();
   }
 
-  // --- 打工币（死亡也可产出）(Task 2.1-2.4) ---
-  if (!isOvertime && !pet.isSick) {
-    petData.dailyRecord.coinHoursAccumulated += (deltaSec / 60);
-    if (petData.dailyRecord.coinHoursAccumulated >= PET_CONST.COIN_INTERVAL_MIN) {
-      var coinsEarned = Math.floor(petData.dailyRecord.coinHoursAccumulated / PET_CONST.COIN_INTERVAL_MIN);
-      petData.coins += coinsEarned;
-      petData.dailyRecord.coinHoursAccumulated -= coinsEarned * PET_CONST.COIN_INTERVAL_MIN;
+  // --- 打工币产出 ---
+  // 正常上班: 30min/枚；加班: 60min/枚；生病/死亡: 不产出
+  if (!pet.isSick && !pet.isDead) {
+    if (isWorking && !isOvertime) {
+      // 健康 < 30 时产出减半
+      var coinIncrement = (pet.health < PET_CONST.HEALTH_LOW_THRESHOLD) ? (deltaSec / 60 * 0.5) : (deltaSec / 60);
+      petData.dailyRecord.coinHoursAccumulated += coinIncrement;
+      if (petData.dailyRecord.coinHoursAccumulated >= PET_CONST.COIN_INTERVAL_MIN) {
+        var coinsEarned = Math.floor(petData.dailyRecord.coinHoursAccumulated / PET_CONST.COIN_INTERVAL_MIN);
+        petData.coins += coinsEarned;
+        petData.dailyRecord.coinHoursAccumulated -= coinsEarned * PET_CONST.COIN_INTERVAL_MIN;
+      }
+    } else if (isOvertime) {
+      // 加班半价：60min/枚（用独立计数器避免与正常混淆）
+      petData.dailyRecord.otCoinAccumulated = (petData.dailyRecord.otCoinAccumulated || 0) + (deltaSec / 60);
+      if (petData.dailyRecord.otCoinAccumulated >= PET_CONST.COIN_INTERVAL_OT_MIN) {
+        var otCoins = Math.floor(petData.dailyRecord.otCoinAccumulated / PET_CONST.COIN_INTERVAL_OT_MIN);
+        petData.coins += otCoins;
+        petData.dailyRecord.otCoinAccumulated -= otCoins * PET_CONST.COIN_INTERVAL_OT_MIN;
+      }
     }
   }
 
@@ -1198,6 +1240,8 @@ function checkLevelUp() {
     leveled = true;
   }
   if (leveled) {
+    // 升级奖励打工币
+    petData.coins = (petData.coins || 0) + PET_CONST.LEVEL_UP_COIN_REWARD;
     savePetData();
     showLevelUpToast(pet.level);
   }
@@ -1208,7 +1252,7 @@ function checkLevelUp() {
 function showLevelUpToast(newLevel) {
   var toast = document.getElementById('levelUpToast');
   if (!toast) return;
-  toast.querySelector('.level-up-text').textContent = '升级啦！Lv.' + newLevel;
+  toast.querySelector('.level-up-text').textContent = '升级啦！Lv.' + newLevel + ' 🎁+' + PET_CONST.LEVEL_UP_COIN_REWARD + '币';
   toast.classList.add('show');
   setTimeout(function() { toast.classList.remove('show'); }, 2000);
 }
@@ -1363,15 +1407,16 @@ function buyRevival() {
     showToast('猫咪还活着，不需要复活币喵~ 🐱');
     return;
   }
-  if (petData.coins < 20) {
-    showToast('打工币不足，无法购买（需要 20 枚）💰');
+  var revivalPrice = PET_CONST.SHOP_ITEMS.revival.price;
+  if (petData.coins < revivalPrice) {
+    showToast('打工币不足，无法购买（需要 ' + revivalPrice + ' 枚）💰');
     return;
   }
-  petData.coins -= 20;
+  petData.coins -= revivalPrice;
   pet.isDead = false;
-  pet.hunger = 70;
-  pet.mood = 70;
-  pet.health = 70;
+  pet.hunger = 75;
+  pet.mood = 75;
+  pet.health = 75;
   pet.isSick = false;
   savePetData();
   updatePetUI();
@@ -1972,6 +2017,5 @@ function save() {
 
 init();
 </script>
-<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("./sw.js").then(r=>console.log("SW registered:",r.scope)).catch(e=>console.log("SW error:",e));});};</script>
 </body>
 </html>

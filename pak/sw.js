@@ -2,12 +2,12 @@
 // Service Worker — 小猫咪工资计算器
 // 修改 CACHE_VERSION 后 push，所有用户下次打开自动更新
 // ====================================================
-const CACHE_VERSION = 'v1.0.0';
+var CACHE_VERSION = 'v1.1.0';
 const CACHE_NAME = 'salary-cat-' + CACHE_VERSION;
 
 const CACHED_FILES = [
   './',
-  './小猫咪工资计算器.html',
+  './index.html',
   './manifest.json'
 ];
 
