@@ -1,0 +1,24 @@
+# Netlify 配置文件
+
+# 重定向：访问根路径直接打开 App
+[[redirects]]
+  from = "/"
+  to = "/小猫咪工资计算器.html"
+  status = 200
+
+# 响应头：确保 Service Worker 正常工作
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Service-Worker-Allowed = "/"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.json"
+  [headers.values]
+    Cache-Control = "no-cache"
