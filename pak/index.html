@@ -1052,6 +1052,7 @@ function checkDailyReset() {
     petData.dailyRecord.date = today;
     petData.dailyRecord.feedCount = 0;
     petData.dailyRecord.coinHoursAccumulated = 0;
+    petData.dailyRecord.otCoinAccumulated = 0;  // 加班打工币计数器跨日重置
     savePetData();
   }
 }
@@ -1074,47 +1075,97 @@ function checkPetDeath() {
 }
 
 // ===== 离线属性补算 =====
+// 区分工作时段和休息时段，分别处理情绪/饥饿/健康/打工币/经验
 function offlineTick(deltaMs) {
   if (!petData || !cfg || deltaMs <= 0) return;
   var pet = petData.pet;
-  if (pet.isDead) return; // 已死亡不再补算衰减
+  if (pet.isDead) return;
 
-  // 离线封顶8小时（防止周末/长假回来猫咪必死）
+  // 离线封顶8小时
   var capMs = PET_CONST.HUNGER_OFFLINE_CAP_HOURS * 3600 * 1000;
   if (deltaMs > capMs) deltaMs = capMs;
 
-  var deltaHour = deltaMs / 3600000;
+  // ── 计算工作时段 vs 休息时段 ──────────────────────────
+  // 用关闭时间 + 当前配置的上下班时间，估算离线期间有多少小时是工作时间
+  var sH = 9, sM = 0, eH = 18, eM = 0;
+  if (cfg && cfg.workStart) { var p = cfg.workStart.split(':'); sH = +p[0]; sM = +p[1]||0; }
+  if (cfg && cfg.workEnd)   { var q = cfg.workEnd.split(':');   eH = +q[0]; eM = +q[1]||0; }
+  var workStartMin = sH * 60 + sM;
+  var workEndMin   = eH * 60 + eM;
 
+  // 以"关闭时刻"为起点，滑动计算工作分钟数
+  var offlineStartTime = new Date(petData.lastTickTime || (Date.now() - deltaMs));
+  var totalOfflineMin  = Math.round(deltaMs / 60000);
+  var workMin = 0;
+  for (var i = 0; i < totalOfflineMin; i++) {
+    var t = new Date(offlineStartTime.getTime() + i * 60000);
+    var wd = t.getDay();
+    var isWeekend = (wd === 0 || wd === 6);
+    var minOfDay = t.getHours() * 60 + t.getMinutes();
+    if (!isWeekend && minOfDay >= workStartMin && minOfDay < workEndMin) workMin++;
+  }
+  var restMin  = totalOfflineMin - workMin;
+  var workHour = workMin  / 60;
+  var restHour = restMin  / 60;
+  // ────────────────────────────────────────────────────
+
+  var beforeCoins = petData.coins;
+  var beforeExp   = pet.exp;
   var beforeHunger = pet.hunger, beforeMood = pet.mood, beforeHealth = pet.health;
 
-  // 离线视为「休息」：情绪缓慢回复，饥饿极慢消耗，健康回复
-  // 情绪：生病时极缓自愈，否则正常恢复
-  if (pet.isSick) {
-    pet.mood += PET_CONST.MOOD_SICK_RECOVERY * deltaHour;
-  } else {
-    pet.mood += PET_CONST.MOOD_REST_RECOVERY * deltaHour;
-  }
-  // 饥饿：休息时极慢消耗（猫咪自己觅食）
-  pet.hunger -= PET_CONST.HUNGER_DRAIN_REST * deltaHour;
-  // 健康：休息恢复
-  pet.health += PET_CONST.HEALTH_REST_RECOVERY * deltaHour;
+  // ── 工作时段：应用工作消耗 + 产出打工币和经验 ──
+  if (workHour > 0 && !pet.isSick) {
+    // 情绪消耗
+    pet.mood   -= PET_CONST.MOOD_DRAIN_NORMAL * workHour;
+    // 饥饿消耗
+    pet.hunger -= PET_CONST.HUNGER_DRAIN_NORMAL * workHour;
+    // 健康消耗
+    pet.health -= PET_CONST.HEALTH_DRAIN_NORMAL * workHour;
 
-  // 属性钳制
-  pet.mood = clampAttr(pet.mood);
+    // 打工币产出（健康 < 30 减半）
+    var coinRate = (pet.health < PET_CONST.HEALTH_LOW_THRESHOLD) ? 0.5 : 1;
+    var coinsEarned = Math.floor(workMin / PET_CONST.COIN_INTERVAL_MIN * coinRate);
+    petData.coins = (petData.coins || 0) + coinsEarned;
+
+    // 经验产出
+    pet.exp = (pet.exp || 0) + PET_CONST.EXP_PER_WORK_HOUR * workHour;
+  }
+
+  // ── 休息时段：情绪/健康恢复，饥饿极慢消耗 ──
+  if (restHour > 0) {
+    if (pet.isSick) {
+      pet.mood += PET_CONST.MOOD_SICK_RECOVERY * restHour;
+    } else {
+      pet.mood += PET_CONST.MOOD_REST_RECOVERY * restHour;
+    }
+    pet.hunger -= PET_CONST.HUNGER_DRAIN_REST * restHour;
+    pet.health += PET_CONST.HEALTH_REST_RECOVERY * restHour;
+  }
+
+  // ── 属性钳制 ──
+  pet.mood   = clampAttr(pet.mood);
   pet.hunger = clampAttr(pet.hunger);
   pet.health = clampAttr(pet.health);
 
-  // 生病判定
+  // ── 生病判定 ──
   if (!pet.isSick && pet.mood < PET_CONST.MOOD_SICK_THRESHOLD) pet.isSick = true;
   if (pet.isSick && pet.mood >= PET_CONST.MOOD_RECOVER_THRESHOLD) pet.isSick = false;
 
-  // 死亡检测
+  // ── 升级检测 ──
+  checkLevelUp();
+
+  // ── 死亡检测 ──
   checkPetDeath();
 
-  var offlineMin = Math.round(deltaMs / 60000);
-  console.log('[PetSystem] 离线补算(休息): ' + offlineMin + '分钟 | 饥饿:' + beforeHunger.toFixed(1) + '→' + pet.hunger.toFixed(1)
+  console.log('[PetSystem] 离线补算: 总' + totalOfflineMin + '分钟 | 上班' + workMin + '分钟 / 休息' + restMin + '分钟'
+    + ' | 饥饿:' + beforeHunger.toFixed(1) + '→' + pet.hunger.toFixed(1)
     + ' 情绪:' + beforeMood.toFixed(1) + '→' + pet.mood.toFixed(1)
-    + ' 健康:' + beforeHealth.toFixed(1) + '→' + pet.health.toFixed(1));
+    + ' 健康:' + beforeHealth.toFixed(1) + '→' + pet.health.toFixed(1)
+    + ' | 打工币:' + beforeCoins + '→' + petData.coins
+    + ' 经验:' + beforeExp.toFixed(2) + '→' + pet.exp.toFixed(2));
+
+  // 重置 lastTickTime，防止 petTick 第一次执行时把离线时段重复计算
+  petData.lastTickTime = Date.now();
   savePetData();
 }
 
